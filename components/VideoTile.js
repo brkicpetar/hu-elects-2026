@@ -43,7 +43,14 @@ export default function VideoTile({ channel, isAudioActive, onActivateAudio }) {
           hls.loadSource(url);
           hls.attachMedia(video);
           hls.on(Hls.Events.MANIFEST_PARSED, () => {
-            if (!destroyed) { setStatus("playing"); video.play().catch(() => {}); }
+            if (!destroyed) {
+              setStatus("playing");
+              video.muted = true; // must start muted for autoplay
+              video.play().then(() => {
+                // after play succeeds, apply correct mute state
+                video.muted = !isAudioActive;
+              }).catch(() => {});
+            }
           });
           hls.on(Hls.Events.ERROR, (_, data) => {
             if (data.fatal && !destroyed) setStatus("error");
@@ -51,7 +58,13 @@ export default function VideoTile({ channel, isAudioActive, onActivateAudio }) {
         } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
           video.src = url;
           video.addEventListener("loadedmetadata", () => {
-            if (!destroyed) { setStatus("playing"); video.play().catch(() => {}); }
+            if (!destroyed) {
+              setStatus("playing");
+              video.muted = true;
+              video.play().then(() => {
+                video.muted = !isAudioActive;
+              }).catch(() => {});
+            }
           });
         } else {
           setStatus("error");
