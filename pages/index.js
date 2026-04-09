@@ -118,6 +118,7 @@ export default function Home() {
           </div>
         )}
 
+        <TopBar
           keywords={keywords}
           setKeywords={setKeywords}
           displayLang={displayLang}
