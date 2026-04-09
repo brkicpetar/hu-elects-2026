@@ -11,31 +11,43 @@ const VideoTile = dynamic(() => import("../components/VideoTile"), { ssr: false 
 
 export default function Home() {
   const [articles, setArticles] = useState([]);
+  const [newArticleIds, setNewArticleIds] = useState(new Set());
   const [loading, setLoading] = useState(true);
   const [lastFetch, setLastFetch] = useState(null);
-  const [audioChannel, setAudioChannel] = useState("m1"); // which channel has audio
+  const [audioChannel, setAudioChannel] = useState("m1");
   const [displayLang, setDisplayLang] = useState("en");
   const [keywords, setKeywords] = useState(DEFAULT_KEYWORDS);
   const [userInteracted, setUserInteracted] = useState(false);
+  const prevArticleIdsRef = useRef(new Set());
 
   const handleStart = () => {
     setUserInteracted(true);
-    // Trigger play on all videos after interaction
     document.querySelectorAll('video').forEach(v => {
       v.muted = true;
       v.play().catch(() => {});
     });
   };
-  const [sidebarTab, setSidebarTab] = useState("news"); // news | social
+  const [sidebarTab, setSidebarTab] = useState("news");
   const intervalRef = useRef(null);
 
   const fetchNews = useCallback(async () => {
     try {
-      const res = await fetch("/api/news");
+      const res = await fetch("/api/news?t=" + Date.now()); // cache bust
       if (!res.ok) return;
       const data = await res.json();
-      setArticles(data.articles || []);
+      const incoming = data.articles || [];
+      
+      // Find truly new articles
+      const incomingIds = new Set(incoming.map((a) => a.id));
+      const brandNew = new Set([...incomingIds].filter((id) => !prevArticleIdsRef.current.has(id)));
+      
+      setArticles(incoming);
       setLastFetch(data.fetchedAt);
+      if (brandNew.size > 0) setNewArticleIds(brandNew);
+      prevArticleIdsRef.current = incomingIds;
+
+      // Clear new badges after 10 seconds
+      setTimeout(() => setNewArticleIds(new Set()), 10000);
     } catch (e) {
       console.error("News fetch failed", e);
     } finally {
@@ -49,11 +61,7 @@ export default function Home() {
     return () => clearInterval(intervalRef.current);
   }, [fetchNews]);
 
-  const alertCount = articles.filter((art) => {
-    if (!keywords.length) return false;
-    const text = `${art.title} ${art.summary} ${art.titleEn || ""} ${art.titleSr || ""}`.toLowerCase();
-    return keywords.some((k) => text.includes(k.toLowerCase()));
-  }).length;
+  const alertCount = newArticleIds.size;
 
   // Active channels (those with stream URLs configured, up to 4)
   const activeChannels = CHANNELS.filter((c) => c.stream).slice(0, 4);
@@ -204,6 +212,7 @@ export default function Home() {
                   displayLang={displayLang}
                   keywords={keywords}
                   loading={loading}
+                  newArticleIds={newArticleIds}
                 />
               ) : (
                 <SocialPanel visible={sidebarTab === "social"} />
