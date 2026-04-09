@@ -21,6 +21,7 @@ export default function VideoTile({ channel, isAudioActive, onActivateAudio }) {
       const url = channel.stream;
 
       if (isHLS(url)) {
+        // ── HLS stream ──
         const Hls = (await import("hls.js")).default;
         if (destroyed) return;
 
@@ -45,38 +46,67 @@ export default function VideoTile({ channel, isAudioActive, onActivateAudio }) {
         }
 
       } else {
-        // Raw MPEG-TS stream via mpegts.js
+        // ── Raw MPEG-TS stream via mpegts.js ──
         const mpegts = (await import("mpegts.js")).default;
         if (destroyed) return;
 
         if (!mpegts.isSupported()) {
+          console.error("mpegts.js not supported in this browser");
           setStatus("error");
           return;
         }
 
-        const player = mpegts.createPlayer({
-          type: "mpegts",
-          isLive: true,
-          url: url,
-        }, {
-          enableWorker: true,
-          liveBufferLatencyChasing: true,
-          liveBufferLatencyMaxLatency: 5,
-          liveBufferLatencyMinRemain: 1,
-        });
+        const player = mpegts.createPlayer(
+          {
+            type: "mpegts",
+            isLive: true,
+            url: url,
+            hasAudio: true,
+            hasVideo: true,
+          },
+          {
+            enableWorker: true,
+            enableStashBuffer: false,
+            stashInitialSize: 128,
+            liveBufferLatencyChasing: true,
+            liveBufferLatencyMaxLatency: 8,
+            liveBufferLatencyMinRemain: 2,
+            lazyLoadMaxDuration: 0,
+            seekType: "range",
+          }
+        );
 
         playerRef.current = player;
         player.attachMediaElement(video);
         player.load();
 
+        // mpegts.js for live streams — start playing as soon as
+        // the browser has enough data, don't wait for MEDIA_INFO
+        const onCanPlay = () => {
+          if (!destroyed) {
+            setStatus("playing");
+            video.play().catch(() => {});
+          }
+        };
+
+        const onError = (errorType, errorDetail, errorInfo) => {
+          console.error("mpegts error:", errorType, errorDetail, errorInfo);
+          if (!destroyed) setStatus("error");
+        };
+
+        video.addEventListener("canplay", onCanPlay, { once: true });
+        player.on(mpegts.Events.ERROR, onError);
+
+        // Fallback: if canplay fires via mpegts events
         player.on(mpegts.Events.MEDIA_INFO, () => {
-          if (!destroyed) { setStatus("playing"); video.play().catch(() => {}); }
+          console.log("mpegts MEDIA_INFO received");
         });
 
-        player.on(mpegts.Events.ERROR, (errorType, errorDetail) => {
-          console.error("mpegts error", errorType, errorDetail);
-          if (!destroyed) setStatus("error");
-        });
+        // Store cleanup refs
+        playerRef.current._onCanPlay = onCanPlay;
+        playerRef.current._onError = onError;
+        playerRef.current._video = video;
+        playerRef.current._mpegts = mpegts;
       }
     };
 
@@ -86,10 +116,17 @@ export default function VideoTile({ channel, isAudioActive, onActivateAudio }) {
       destroyed = true;
       if (playerRef.current) {
         try {
-          if (typeof playerRef.current.destroy === "function") playerRef.current.destroy();
-          else if (typeof playerRef.current.stopLoad === "function") {
-            playerRef.current.stopLoad();
-            playerRef.current.detachMedia();
+          const p = playerRef.current;
+          if (p._video && p._onCanPlay) {
+            p._video.removeEventListener("canplay", p._onCanPlay);
+          }
+          if (p.off && p._onError && p._mpegts) {
+            p.off(p._mpegts.Events.ERROR, p._onError);
+          }
+          if (typeof p.destroy === "function") p.destroy();
+          else if (typeof p.stopLoad === "function") {
+            p.stopLoad();
+            p.detachMedia();
           }
         } catch (e) {}
         playerRef.current = null;
