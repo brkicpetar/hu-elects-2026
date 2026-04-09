@@ -47,7 +47,7 @@ export default function VideoTile({ channel, isActive, isAudioActive, onActivate
 
       if (destroyed) return;
 
-      if (Hls.isSupported()) {
+      if (Hls.isSupported() && (channel.stream.includes(".m3u8") || channel.stream.includes("m3u8"))) {
         hls = new Hls({
           enableWorker: true,
           lowLatencyMode: true,
@@ -65,6 +65,14 @@ export default function VideoTile({ channel, isActive, isAudioActive, onActivate
         hls.on(Hls.Events.ERROR, (_, data) => {
           if (data.fatal && !destroyed) setStatus("error");
         });
+      } else if (video.canPlayType("video/mp2t") || video.canPlayType("video/mpeg")) {
+        // Direct MPEG-TS stream (transcoded)
+        video.src = channel.stream;
+        video.addEventListener("canplay", () => {
+          setStatus("playing");
+          video.play().catch(() => {});
+        });
+        video.addEventListener("error", () => setStatus("error"));
       } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
         video.src = streamUrl;
         video.addEventListener("loadedmetadata", () => {
