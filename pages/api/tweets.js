@@ -1,7 +1,3 @@
-// api/tweets.js
-// Fetches tweets via rss.app RSS feed — no API key required.
-// Usage: GET /api/tweets?id=magyar  (id must match TWITTER_ACCOUNTS in config)
-
 import Parser from "rss-parser";
 import { TWITTER_ACCOUNTS } from "../../lib/config";
 
