@@ -16,7 +16,16 @@ export default function Home() {
   const [audioChannel, setAudioChannel] = useState("m1"); // which channel has audio
   const [displayLang, setDisplayLang] = useState("en");
   const [keywords, setKeywords] = useState(DEFAULT_KEYWORDS);
-  const [showSocial, setShowSocial] = useState(false);
+  const [userInteracted, setUserInteracted] = useState(false);
+
+  const handleStart = () => {
+    setUserInteracted(true);
+    // Trigger play on all videos after interaction
+    document.querySelectorAll('video').forEach(v => {
+      v.muted = true;
+      v.play().catch(() => {});
+    });
+  };
   const [sidebarTab, setSidebarTab] = useState("news"); // news | social
   const intervalRef = useRef(null);
 
@@ -69,7 +78,46 @@ export default function Home() {
       </Head>
 
       <div style={{ height: "100dvh", display: "flex", flexDirection: "column", background: "#080808", color: "#e0e0e0" }}>
-        <TopBar
+        {!userInteracted && (
+          <div
+            onClick={handleStart}
+            style={{
+              position: "fixed", inset: 0, zIndex: 999,
+              background: "rgba(8,8,8,0.92)",
+              display: "flex", flexDirection: "column",
+              alignItems: "center", justifyContent: "center",
+              cursor: "pointer",
+            }}
+          >
+            <div style={{
+              border: "1px solid #222", borderRadius: 8,
+              padding: "32px 48px", textAlign: "center",
+            }}>
+              <div style={{
+                color: "#e53935", fontFamily: "'DM Mono', monospace",
+                fontWeight: 700, fontSize: 13, letterSpacing: "0.12em",
+                textTransform: "uppercase", marginBottom: 16,
+              }}>
+                HU/ELECT 2026 — OSINT
+              </div>
+              <div style={{
+                color: "#e0e0e0", fontFamily: "'DM Sans', sans-serif",
+                fontSize: 15, marginBottom: 24,
+              }}>
+                Click anywhere to start all streams
+              </div>
+              <div style={{
+                background: "#e53935", color: "#fff",
+                fontFamily: "'DM Mono', monospace", fontSize: 11,
+                letterSpacing: "0.08em", textTransform: "uppercase",
+                padding: "10px 24px", borderRadius: 4, display: "inline-block",
+              }}>
+                ▶ Start
+              </div>
+            </div>
+          </div>
+        )}
+
           keywords={keywords}
           setKeywords={setKeywords}
           displayLang={displayLang}
