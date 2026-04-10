@@ -125,7 +125,7 @@ export default function NewsSidebar({ articles, displayLang, keywords, loading, 
 
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
               <span style={{
-                background: CATEGORY_COLORS[art.category] || "#333", color: "#fff",
+                background: CATEGORY_COLORS[art.category] || "#424242", color: "#fff",
                 fontSize: 9, fontFamily: "'DM Mono', monospace", letterSpacing: "0.08em",
                 padding: "1px 5px", borderRadius: 2, textTransform: "uppercase", fontWeight: 700,
               }}>

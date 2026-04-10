@@ -62,11 +62,11 @@ export default function TopBar({ keywords, setKeywords, displayLang, setDisplayL
             textTransform: "uppercase",
           }}
         >
-          HU/ELECT 2026
+          HU/ELECTS 2026
         </span>
         <span
           style={{
-            color: "#333",
+            color: "#e53935",
             fontFamily: "'DM Mono', monospace",
             fontSize: 9,
             letterSpacing: "0.08em",
@@ -76,7 +76,7 @@ export default function TopBar({ keywords, setKeywords, displayLang, setDisplayL
             borderRadius: 2,
           }}
         >
-          OSINT
+          LIVE
         </span>
       </div>
 
@@ -117,7 +117,7 @@ export default function TopBar({ keywords, setKeywords, displayLang, setDisplayL
 
       {/* Last fetch indicator */}
       {lastFetch && (
-        <div style={{ color: "#333", fontFamily: "monospace", fontSize: 10, flexShrink: 0 }}>
+        <div style={{ color: "#424242", fontFamily: "monospace", fontSize: 10, flexShrink: 0 }}>
           last sync {formatInTimeZone(new Date(lastFetch), "Europe/Belgrade", "HH:mm:ss")}
         </div>
       )}
@@ -193,7 +193,7 @@ export default function TopBar({ keywords, setKeywords, displayLang, setDisplayL
                 onClick={() => removeKeyword(kw)}
                 style={{
                   background: "#1a1a1a",
-                  border: "1px solid #333",
+                  border: "1px solid #424242",
                   color: "#f9a825",
                   fontFamily: "monospace",
                   fontSize: 10,

@@ -86,6 +86,8 @@ export default function Home() {
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="true" />
         <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500;700&family=DM+Sans:wght@400;500&display=swap" rel="stylesheet" />
+        <link rel="icon" type="image/x-icon" href="../styles/favicon.ico">
+
       </Head>
 
       <div style={{ height: "100dvh", display: "flex", flexDirection: "column", background: "#080808", color: "#e0e0e0" }}>
