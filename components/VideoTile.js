@@ -47,10 +47,10 @@ export default function VideoTile({ channel, isAudioActive, onActivateAudio, glo
               setStatus("playing");
               video.muted = true; // must start muted for autoplay
               video.play().then(() => {
-                if (!isAudioActive || globalMuted) {
+                if (!isAudioActive) {
                   video.muted = true;
                 } else {
-                  video.muted = false;
+                  video.muted = globalMuted ?? false;
                   video.volume = globalVolume ?? 0.8;
                 }
               }).catch(() => {});
@@ -66,10 +66,10 @@ export default function VideoTile({ channel, isAudioActive, onActivateAudio, glo
               setStatus("playing");
               video.muted = true;
               video.play().then(() => {
-                if (!isAudioActive || globalMuted) {
+                if (!isAudioActive) {
                   video.muted = true;
                 } else {
-                  video.muted = false;
+                  video.muted = globalMuted ?? false;
                   video.volume = globalVolume ?? 0.8;
                 }
               }).catch(() => {});
@@ -122,10 +122,12 @@ export default function VideoTile({ channel, isAudioActive, onActivateAudio, glo
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-    if (!isAudioActive || globalMuted) {
+    if (!isAudioActive) {
+      // Non-active tiles stay muted regardless of volume slider
       video.muted = true;
     } else {
-      video.muted = false;
+      // Active tile only: apply mute toggle and volume
+      video.muted = globalMuted ?? false;
       video.volume = globalVolume ?? 0.8;
     }
   }, [isAudioActive, globalMuted, globalVolume]);

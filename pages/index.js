@@ -186,13 +186,8 @@ export default function Home() {
               <input
                 type="range"
                 min={0} max={1} step={0.02}
-                value={muted ? 0 : volume}
-                onChange={(e) => {
-                  const v = parseFloat(e.target.value);
-                  setVolume(v);
-                  if (v > 0) setMuted(false);
-                  else setMuted(true);
-                }}
+                value={volume}
+                onChange={(e) => setVolume(parseFloat(e.target.value))}
                 style={{ flex: 1, accentColor: "#e53935", cursor: "pointer", height: 4 }}
               />
 
