@@ -11,7 +11,7 @@ const VideoTile = dynamic(() => import("../components/VideoTile"), { ssr: false 
 
 const TABS = [
   { id: "news",     label: (n) => n > 0 ? `News (${n})` : "News" },
-  { id: "social",   label: () => "Social" },
+  { id: "social",   label: () => "𝕏" },
   { id: "facebook", label: () => "Facebook" },
 ];
 
@@ -25,6 +25,11 @@ export default function Home() {
   const [keywords, setKeywords] = useState(DEFAULT_KEYWORDS);
   const [userInteracted, setUserInteracted] = useState(false);
   const [sidebarTab, setSidebarTab] = useState("news");
+
+  // Global volume/mute state
+  const [volume, setVolume] = useState(0.8);
+  const [muted, setMuted] = useState(false);
+
   const prevArticleIdsRef = useRef(new Set());
   const intervalRef = useRef(null);
 
@@ -35,6 +40,14 @@ export default function Home() {
       v.play().catch(() => {});
     });
   };
+
+  // Apply volume/mute to all videos whenever they change
+  useEffect(() => {
+    document.querySelectorAll("video").forEach((v) => {
+      v.volume = volume;
+      v.muted = muted;
+    });
+  }, [volume, muted]);
 
   const fetchNews = useCallback(async () => {
     try {
@@ -78,25 +91,19 @@ export default function Home() {
       <div style={{ height: "100dvh", display: "flex", flexDirection: "column", background: "#080808", color: "#e0e0e0" }}>
         {!userInteracted && (
           <div onClick={handleStart} style={{
-            position: "fixed", inset: 0, zIndex: 999,
-            background: "rgba(8,8,8,0.92)",
-            display: "flex", flexDirection: "column",
-            alignItems: "center", justifyContent: "center", cursor: "pointer",
+            position: "fixed", inset: 0, zIndex: 999, background: "rgba(8,8,8,0.92)",
+            display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", cursor: "pointer",
           }}>
             <div style={{ border: "1px solid #222", borderRadius: 8, padding: "32px 48px", textAlign: "center" }}>
-              <div style={{
-                color: "#e53935", fontFamily: "'DM Mono', monospace",
-                fontWeight: 700, fontSize: 13, letterSpacing: "0.12em",
-                textTransform: "uppercase", marginBottom: 16,
-              }}>HU/ELECT 2026 — OSINT</div>
+              <div style={{ color: "#e53935", fontFamily: "'DM Mono', monospace", fontWeight: 700, fontSize: 13, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 16 }}>
+                HU/ELECT 2026 — OSINT
+              </div>
               <div style={{ color: "#e0e0e0", fontFamily: "'DM Sans', sans-serif", fontSize: 15, marginBottom: 24 }}>
                 Click anywhere to start all streams
               </div>
-              <div style={{
-                background: "#e53935", color: "#fff", fontFamily: "'DM Mono', monospace",
-                fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase",
-                padding: "10px 24px", borderRadius: 4, display: "inline-block",
-              }}>▶ Start</div>
+              <div style={{ background: "#e53935", color: "#fff", fontFamily: "'DM Mono', monospace", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", padding: "10px 24px", borderRadius: 4, display: "inline-block" }}>
+                ▶ Start
+              </div>
             </div>
           </div>
         )}
@@ -117,7 +124,10 @@ export default function Home() {
             {allChannels.map((channel, i) => (
               <VideoTile key={channel.id} channel={channel} index={i}
                 isAudioActive={audioChannel === channel.id}
-                onActivateAudio={setAudioChannel} />
+                onActivateAudio={setAudioChannel}
+                globalVolume={volume}
+                globalMuted={muted}
+              />
             ))}
           </div>
 
@@ -130,8 +140,7 @@ export default function Home() {
             <div style={{ display: "flex", borderBottom: "1px solid #1a1a1a", flexShrink: 0 }}>
               {TABS.map((tab) => (
                 <button key={tab.id} onClick={() => setSidebarTab(tab.id)} style={{
-                  flex: 1, background: sidebarTab === tab.id ? "#111" : "transparent",
-                  border: "none",
+                  flex: 1, background: sidebarTab === tab.id ? "#111" : "transparent", border: "none",
                   borderBottom: sidebarTab === tab.id ? "2px solid #e53935" : "2px solid transparent",
                   color: sidebarTab === tab.id ? "#e0e0e0" : "#444",
                   fontFamily: "'DM Mono', monospace", fontSize: 10,
@@ -149,21 +158,54 @@ export default function Home() {
                 <NewsSidebar articles={articles} displayLang={displayLang}
                   keywords={keywords} loading={loading} newArticleIds={newArticleIds} />
               )}
-              {sidebarTab === "social" && <SocialPanel visible={true} />}
-              {sidebarTab === "facebook" && <FacebookPanel visible={true} />}
+              {sidebarTab === "social" && <SocialPanel visible={true} displayLang={displayLang} />}
+              {sidebarTab === "facebook" && <FacebookPanel visible={true} displayLang={displayLang} />}
             </div>
 
-            {/* Footer */}
+            {/* Footer: volume + mute + refresh */}
             <div style={{
-              borderTop: "1px solid #1a1a1a", padding: "8px 16px",
-              display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0,
+              borderTop: "1px solid #1a1a1a", padding: "8px 14px",
+              display: "flex", alignItems: "center", gap: 8, flexShrink: 0,
             }}>
-              <span style={{ color: "#333", fontSize: 9, fontFamily: "monospace" }}>auto-refresh 90s</span>
-              <button onClick={fetchNews} style={{
-                background: "transparent", border: "1px solid #222", color: "#555",
-                fontFamily: "monospace", fontSize: 9, padding: "3px 8px",
-                borderRadius: 3, cursor: "pointer", letterSpacing: "0.06em", textTransform: "uppercase",
-              }}>↻ refresh now</button>
+              {/* Mute button */}
+              <button
+                onClick={() => setMuted((m) => !m)}
+                title={muted ? "Unmute" : "Mute"}
+                style={{
+                  background: "transparent", border: "1px solid #222",
+                  color: muted ? "#e53935" : "#555",
+                  fontFamily: "monospace", fontSize: 11,
+                  padding: "3px 7px", borderRadius: 3, cursor: "pointer",
+                  flexShrink: 0, lineHeight: 1,
+                }}
+              >
+                {muted ? "🔇" : "🔊"}
+              </button>
+
+              {/* Volume slider */}
+              <input
+                type="range"
+                min={0} max={1} step={0.02}
+                value={muted ? 0 : volume}
+                onChange={(e) => {
+                  const v = parseFloat(e.target.value);
+                  setVolume(v);
+                  if (v > 0) setMuted(false);
+                  else setMuted(true);
+                }}
+                style={{ flex: 1, accentColor: "#e53935", cursor: "pointer", height: 4 }}
+              />
+
+              {/* Refresh */}
+              <button
+                onClick={fetchNews}
+                style={{
+                  background: "transparent", border: "1px solid #222", color: "#555",
+                  fontFamily: "monospace", fontSize: 9, padding: "3px 8px",
+                  borderRadius: 3, cursor: "pointer", letterSpacing: "0.06em",
+                  textTransform: "uppercase", flexShrink: 0,
+                }}
+              >↻</button>
             </div>
           </div>
         </main>
@@ -176,6 +218,11 @@ export default function Home() {
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #222; border-radius: 2px; }
         ::-webkit-scrollbar-thumb:hover { background: #333; }
+        input[type=range] { -webkit-appearance: none; appearance: none; background: transparent; }
+        input[type=range]::-webkit-slider-runnable-track { height: 3px; background: #222; border-radius: 2px; }
+        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%; background: #e53935; margin-top: -4.5px; cursor: pointer; }
+        input[type=range]::-moz-range-track { height: 3px; background: #222; border-radius: 2px; }
+        input[type=range]::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; background: #e53935; border: none; cursor: pointer; }
         @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
         @keyframes alertPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
         @keyframes pulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }

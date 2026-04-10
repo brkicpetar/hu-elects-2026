@@ -4,7 +4,7 @@ const isHLS = (url) => url.includes(".m3u8") || url.includes("m3u8") || url.incl
 const isEmbed = (url) => url.startsWith("embed:") || url.includes("player.php") || url.includes("youtube.com") || url.includes("youtu.be");
 const getEmbedUrl = (url) => url.startsWith("embed:") ? url.slice(6) : url;
 
-export default function VideoTile({ channel, isAudioActive, onActivateAudio }) {
+export default function VideoTile({ channel, isAudioActive, onActivateAudio, globalVolume, globalMuted }) {
   const videoRef = useRef(null);
   const playerRef = useRef(null);
   const [status, setStatus] = useState("idle");
@@ -47,8 +47,12 @@ export default function VideoTile({ channel, isAudioActive, onActivateAudio }) {
               setStatus("playing");
               video.muted = true; // must start muted for autoplay
               video.play().then(() => {
-                // after play succeeds, apply correct mute state
-                video.muted = !isAudioActive;
+                if (!isAudioActive || globalMuted) {
+                  video.muted = true;
+                } else {
+                  video.muted = false;
+                  video.volume = globalVolume ?? 0.8;
+                }
               }).catch(() => {});
             }
           });
@@ -62,7 +66,12 @@ export default function VideoTile({ channel, isAudioActive, onActivateAudio }) {
               setStatus("playing");
               video.muted = true;
               video.play().then(() => {
-                video.muted = !isAudioActive;
+                if (!isAudioActive || globalMuted) {
+                  video.muted = true;
+                } else {
+                  video.muted = false;
+                  video.volume = globalVolume ?? 0.8;
+                }
               }).catch(() => {});
             }
           });
@@ -109,9 +118,17 @@ export default function VideoTile({ channel, isAudioActive, onActivateAudio }) {
     };
   }, [channel.stream]);
 
+  // React to audio active tile switching + global mute/volume
   useEffect(() => {
-    if (videoRef.current) videoRef.current.muted = !isAudioActive;
-  }, [isAudioActive]);
+    const video = videoRef.current;
+    if (!video) return;
+    if (!isAudioActive || globalMuted) {
+      video.muted = true;
+    } else {
+      video.muted = false;
+      video.volume = globalVolume ?? 0.8;
+    }
+  }, [isAudioActive, globalMuted, globalVolume]);
 
   const toggleFullscreen = () => {
     const tile = document.getElementById(`tile-${channel.id}`);
@@ -133,7 +150,6 @@ export default function VideoTile({ channel, isAudioActive, onActivateAudio }) {
       }}
       onClick={() => onActivateAudio(channel.id)}
     >
-      {/* Iframe embed (e.g. Mediaklikk, YouTube) */}
       {embedUrl ? (
         <iframe
           src={embedUrl}
@@ -143,8 +159,12 @@ export default function VideoTile({ channel, isAudioActive, onActivateAudio }) {
           scrolling="no"
         />
       ) : (
-        <video ref={videoRef} muted={!isAudioActive} playsInline
-          style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+        <video
+          ref={videoRef}
+          muted
+          playsInline
+          style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+        />
       )}
 
       {/* Channel label */}
@@ -157,7 +177,7 @@ export default function VideoTile({ channel, isAudioActive, onActivateAudio }) {
         {channel.name}
       </div>
 
-      {/* Audio indicator — only for non-embed streams */}
+      {/* Audio indicator */}
       {isAudioActive && !embedUrl && (
         <div style={{
           position: "absolute", top: 8, right: 8, display: "flex", alignItems: "center", gap: 4,
@@ -165,11 +185,11 @@ export default function VideoTile({ channel, isAudioActive, onActivateAudio }) {
           color: channel.color, fontSize: 10, fontFamily: "'DM Mono', monospace",
           letterSpacing: "0.05em", pointerEvents: "none",
         }}>
-          <span style={{ fontSize: 9 }}>🔊</span> AUDIO
+          <span style={{ fontSize: 9 }}>{globalMuted ? "🔇" : "🔊"}</span>
+          {globalMuted ? "MUTED" : "AUDIO"}
         </div>
       )}
 
-      {/* Status overlays */}
       {status === "loading" && (
         <div style={overlayStyle}>
           <div style={{ color: "#555", fontFamily: "monospace", fontSize: 12 }}>connecting…</div>
@@ -194,14 +214,12 @@ export default function VideoTile({ channel, isAudioActive, onActivateAudio }) {
         </div>
       )}
 
-      {/* Fullscreen button */}
       {status === "playing" && (
         <button onClick={(e) => { e.stopPropagation(); toggleFullscreen(); }}
           style={{
             position: "absolute", bottom: 8, right: 8, background: "rgba(0,0,0,0.5)",
             border: "none", color: "#aaa", cursor: "pointer",
-            padding: "3px 6px", borderRadius: 3, fontSize: 12, lineHeight: 1,
-            zIndex: 10,
+            padding: "3px 6px", borderRadius: 3, fontSize: 12, lineHeight: 1, zIndex: 10,
           }} title="Fullscreen">⛶</button>
       )}
     </div>

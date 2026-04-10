@@ -2,23 +2,28 @@ import Parser from "rss-parser";
 import { TWITTER_ACCOUNTS } from "../../lib/config";
 
 const parser = new Parser({
-  customFields: {
-    item: [["media:content", "mediaContent"]],
-  },
+  customFields: { item: [["media:content", "mediaContent"]] },
 });
 
-function stripHtml(html) {
-  if (!html) return "";
-  return html
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<[^>]+>/g, "")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#039;/g, "'")
-    .replace(/&nbsp;/g, " ")
-    .trim();
+async function translateTexts(texts) {
+  if (!texts.length) return texts;
+  try {
+    const baseUrl = process.env.VERCEL_URL
+      ? `https://${process.env.VERCEL_URL}`
+      : "http://localhost:3000";
+    const res = await fetch(`${baseUrl}/api/translate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ texts }),
+      signal: AbortSignal.timeout(35000),
+    });
+    if (!res.ok) return texts;
+    const data = await res.json();
+    return data.translated || texts;
+  } catch (e) {
+    console.error("translateTexts failed:", e.message);
+    return texts;
+  }
 }
 
 export default async function handler(req, res) {
@@ -33,16 +38,9 @@ export default async function handler(req, res) {
   try {
     const feed = await parser.parseURL(account.rssUrl);
 
-    // rss.app puts the tweet text in item.title, image in media:content
-    const tweets = (feed.items || []).slice(0, 20).map((item) => {
-      const image =
-        item.mediaContent?.["$"]?.url ||
-        item.mediaContent?.url ||
-        null;
-
-      // title is the raw tweet text; skip items that are just "Image" with no text
+    const raw = (feed.items || []).slice(0, 20).map((item) => {
+      const image = item.mediaContent?.["$"]?.url || item.mediaContent?.url || null;
       const text = item.title && item.title !== "Image" ? item.title : null;
-
       return {
         id: item.guid || item.link,
         text,
@@ -50,9 +48,17 @@ export default async function handler(req, res) {
         image,
         url: item.link || `https://x.com/${account.handle}`,
       };
-    }).filter((t) => t.text || t.image); // skip completely empty items
+    }).filter((t) => t.text || t.image);
 
-    // Pull profile image from feed channel if not hardcoded
+    // Translate non-empty texts
+    const textsToTranslate = raw.map((t) => t.text || "");
+    const translated = await translateTexts(textsToTranslate);
+
+    const tweets = raw.map((t, i) => ({
+      ...t,
+      textEn: translated[i] && translated[i] !== t.text ? translated[i] : null,
+    }));
+
     const profileImage = account.profileImage || feed.image?.url || null;
 
     return res.json({

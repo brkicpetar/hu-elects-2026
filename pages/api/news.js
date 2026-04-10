@@ -1,5 +1,5 @@
 import Parser from "rss-parser";
-import { RSS_FEEDS, LIBRETRANSLATE_URL } from "../../lib/config";
+import { RSS_FEEDS } from "../../lib/config";
 
 const parser = new Parser({
   customFields: {
@@ -27,24 +27,24 @@ function extractThumbnail(item) {
   return match ? match[1] : null;
 }
 
-async function translateTexts(texts, sourceLang) {
-  if (!texts.length || !LIBRETRANSLATE_URL) return null;
+async function translateTexts(texts) {
+  if (!texts.length) return texts;
   try {
-    const res = await fetch(`${LIBRETRANSLATE_URL}/translate`, {
+    const baseUrl = process.env.VERCEL_URL
+      ? `https://${process.env.VERCEL_URL}`
+      : "http://localhost:3000";
+    const res = await fetch(`${baseUrl}/api/translate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ q: texts, source: sourceLang, target: "en", format: "text" }),
-      signal: AbortSignal.timeout(15000),
+      body: JSON.stringify({ texts }),
+      signal: AbortSignal.timeout(35000),
     });
-    if (!res.ok) {
-      console.error("LibreTranslate error:", res.status, await res.text());
-      return null;
-    }
+    if (!res.ok) return texts;
     const data = await res.json();
-    return Array.isArray(data.translatedText) ? data.translatedText : null;
+    return data.translated || texts;
   } catch (e) {
-    console.error("Translation failed:", e.message);
-    return null;
+    console.error("translateTexts failed:", e.message);
+    return texts;
   }
 }
 
@@ -87,10 +87,7 @@ export default async function handler(req, res) {
     const cluster = [i];
     articles.forEach((other, j) => {
       if (i === j || clustered.has(j)) return;
-      if (similarity(art.title, other.title) > 0.45) {
-        cluster.push(j);
-        clustered.add(j);
-      }
+      if (similarity(art.title, other.title) > 0.45) { cluster.push(j); clustered.add(j); }
     });
     clustered.add(i);
     clusters.push(cluster);
@@ -98,35 +95,25 @@ export default async function handler(req, res) {
 
   let finalArticles = clusters.map((cluster, ci) => {
     const primary = articles[cluster[0]];
-    return {
-      ...primary,
-      cluster: ci,
-      clusterSize: cluster.length,
-      clusterSources: cluster.map((idx) => articles[idx].source),
-    };
+    return { ...primary, cluster: ci, clusterSize: cluster.length, clusterSources: cluster.map((idx) => articles[idx].source) };
   });
 
-  // Translate Hungarian articles in small batches to avoid timeout
+  // Only translate Hungarian articles; English sources (NYT, Politico) are skipped
   const huArticles = finalArticles.filter((a) => a.lang === "hu");
-  
+
   if (huArticles.length > 0) {
-    // Split into batches of 10 to avoid LibreTranslate timeouts
-    const batchSize = 10;
-    for (let i = 0; i < huArticles.length; i += batchSize) {
-      const batch = huArticles.slice(i, i + batchSize);
-      const titles = batch.map((a) => a.title);
-      const summaries = batch.map((a) => a.summary.slice(0, 300));
+    const titles = huArticles.map((a) => a.title);
+    const summaries = huArticles.map((a) => a.summary.slice(0, 300));
 
-      const [titleTranslations, summaryTranslations] = await Promise.all([
-        translateTexts(titles, "hu"),
-        translateTexts(summaries, "hu"),
-      ]);
+    const [translatedTitles, translatedSummaries] = await Promise.all([
+      translateTexts(titles),
+      translateTexts(summaries),
+    ]);
 
-      batch.forEach((art, j) => {
-        art.titleEn = titleTranslations?.[j] || null;
-        art.summaryEn = summaryTranslations?.[j] || null;
-      });
-    }
+    huArticles.forEach((art, i) => {
+      art.titleEn = translatedTitles[i] !== art.title ? translatedTitles[i] : null;
+      art.summaryEn = translatedSummaries[i] !== art.summary ? translatedSummaries[i] : null;
+    });
   }
 
   res.json({ articles: finalArticles, fetchedAt: new Date().toISOString() });
