@@ -81,12 +81,12 @@ export default function Home() {
   return (
     <>
       <Head>
-        <title>HU/ELECT 2026 — OSINT Platform</title>
+        <title>HU/ELECTS 2026</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="true" />
         <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500;700&family=DM+Sans:wght@400;500&display=swap" rel="stylesheet" />
-        <link rel="icon" type="image/x-icon" href="../styles/favicon.ico" />
+        <link rel="icon" type="image/x-icon" href="/favicon.ico" />
 
       </Head>
 
