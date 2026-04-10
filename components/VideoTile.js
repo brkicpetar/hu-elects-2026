@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 const HLSType = ["m3u8", "/m1", "/novas", "/proxy"];
 
-const isHLS = (url) => HLSType.some((key) => url?.includes(key));
+const isHLS = (url) => HLSType.some((k) => url?.includes(k));
 
 const isEmbed = (url) =>
   url?.startsWith("embed:") ||
@@ -19,46 +19,17 @@ export default function VideoTile({
   onActivateAudio,
 }) {
   const videoRef = useRef(null);
-  const playerRef = useRef(null);
-  const modeRef = useRef(null);
-  const destroyedRef = useRef(false);
-
   const [status, setStatus] = useState("idle");
 
-  const resetVideo = (video) => {
-    try {
-      video.pause();
-      video.removeAttribute("src");
-      video.load();
-      video.currentTime = 0;
-    } catch {}
-  };
-
-  const destroyPlayer = () => {
-    const p = playerRef.current;
-    if (!p) return;
-
-    try {
-      if (modeRef.current === "hls") {
-        p.destroy();
-      } else if (modeRef.current === "mpegts") {
-        p.stopLoad?.();
-        p.detachMedia?.();
-        p.destroy?.();
-      }
-    } catch {}
-
-    playerRef.current = null;
-    modeRef.current = null;
-  };
+  const destroyedRef = useRef(false);
+  const retryRef = useRef(0);
 
   useEffect(() => {
     destroyedRef.current = false;
-
     const video = videoRef.current;
     const url = channel.stream;
 
-    if (!url || !video) {
+    if (!video || !url) {
       setStatus("idle");
       return;
     }
@@ -70,159 +41,59 @@ export default function VideoTile({
 
     setStatus("loading");
 
-    let firstSegmentDropped = false;
+    const cleanup = () => {
+      try {
+        video.pause();
+        video.removeAttribute("src");
+        video.load();
+      } catch {}
+    };
 
-    const loadStream = async () => {
-      destroyPlayer();
-      resetVideo(video);
-
+    const load = () => {
+      cleanup();
       if (destroyedRef.current) return;
 
-      // =========================
-      // HLS PATH
-      // =========================
-      if (isHLS(url)) {
-        const Hls = (await import("hls.js")).default;
-        if (destroyedRef.current) return;
+      video.src = url;
+      video.autoplay = true;
+      video.playsInline = true;
+      video.muted = true; // required for autoplay
 
-        if (Hls.isSupported()) {
-          const hls = new Hls({
-            enableWorker: true,
-            lowLatencyMode: false,
-            backBufferLength: 30,
-          });
-
-          modeRef.current = "hls";
-          playerRef.current = hls;
-
-          hls.loadSource(url);
-          hls.attachMedia(video);
-
-          hls.on(Hls.Events.MANIFEST_PARSED, async () => {
-            if (destroyedRef.current) return;
-
-            try {
-              video.muted = true;
-              await video.play();
-              video.muted = !isAudioActive;
-              setStatus("playing");
-            } catch {
-              setStatus("error");
-            }
-          });
-
-          hls.on(Hls.Events.ERROR, (_, data) => {
-            if (data.fatal) {
-              console.warn("HLS fatal error:", data);
-              setStatus("error");
-            }
-          });
-
-          return;
-        }
-
-        video.src = url;
-        setStatus("playing");
-        return;
-      }
-
-      // =========================
-      // MPEGTS PRIMARY (FIXED)
-      // =========================
-      const mpegts = (await import("mpegts.js")).default;
-      if (destroyedRef.current) return;
-
-      if (!mpegts.isSupported()) {
-        setStatus("error");
-        return;
-      }
-
-      const player = mpegts.createPlayer(
-        {
-          type: "mpegts",
-          isLive: true,
-          url,
-          hasAudio: true,
-          hasVideo: true,
-        },
-        {
-          enableWorker: true,
-
-          // 🔥 stability first (fixes your MSE crash)
-          enableStashBuffer: true,
-          stashInitialSize: 1024,
-
-          liveBufferLatencyChasing: true,
-          liveBufferLatencyMinRemain: 1,
-          liveBufferLatencyMaxLatency: 8,
-        }
-      );
-
-      playerRef.current = player;
-      modeRef.current = "mpegts";
-
-      player.attachMediaElement(video);
-      player.load();
-
-      // =========================
-      // DROP FIRST BAD SEGMENT
-      // =========================
-      player.on(mpegts.Events.MEDIA_SEGMENT_LOADED, () => {
-        if (!firstSegmentDropped) {
-          firstSegmentDropped = true;
-          console.warn("Dropping first unstable TS segment");
-          return;
-        }
-      });
-
-      // =========================
-      // SAFE START
-      // =========================
-      player.on(mpegts.Events.STREAM_LOADED, async () => {
-        if (destroyedRef.current) return;
-
+      const onCanPlay = async () => {
         try {
           await video.play();
+          video.muted = !isAudioActive;
           setStatus("playing");
+          retryRef.current = 0;
         } catch {
           setStatus("error");
         }
-      });
-
-      // =========================
-      // HARD RECOVERY (MSE SAFE)
-      // =========================
-      const recover = () => {
-        try {
-          player.destroy();
-        } catch {}
-
-        playerRef.current = null;
-        modeRef.current = null;
-
-        setStatus("error");
-
-        // IMPORTANT: full reset is required for MSE corruption
-        setTimeout(() => {
-          window.location.reload();
-        }, 500);
       };
 
-      player.on(mpegts.Events.ERROR, (type, detail) => {
-        console.warn("MPEGTS ERROR:", type, detail);
-        recover();
-      });
+      const onError = () => {
+        console.warn("Video error");
+
+        // 🔥 smart retry instead of reload
+        if (retryRef.current < 2) {
+          retryRef.current++;
+          setTimeout(load, 800);
+        } else {
+          setStatus("error");
+        }
+      };
+
+      video.addEventListener("canplay", onCanPlay, { once: true });
+      video.addEventListener("error", onError, { once: true });
     };
 
-    loadStream();
+    load();
 
     return () => {
       destroyedRef.current = true;
-      destroyPlayer();
+      cleanup();
     };
   }, [channel.stream]);
 
-  // mute sync
+  // audio sync
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -243,33 +114,25 @@ export default function VideoTile({
   return (
     <div
       id={`tile-${channel.id}`}
-      className="video-tile"
+      onClick={() => onActivateAudio(channel.id)}
       style={{
         position: "relative",
         background: "#0a0a0a",
-        borderRadius: "6px",
+        borderRadius: 6,
         overflow: "hidden",
+        aspectRatio: "16/9",
         border: isAudioActive
           ? `2px solid ${channel.color}`
           : "2px solid #1a1a1a",
-        transition: "border-color 0.2s",
         cursor: "pointer",
-        aspectRatio: "16/9",
       }}
-      onClick={() => onActivateAudio(channel.id)}
     >
       {embedUrl ? (
         <iframe
           src={embedUrl}
-          style={{
-            width: "100%",
-            height: "100%",
-            border: "none",
-            display: "block",
-          }}
-          allowFullScreen
+          style={{ width: "100%", height: "100%", border: "none" }}
           allow="autoplay; fullscreen"
-          scrolling="no"
+          allowFullScreen
         />
       ) : (
         <video
@@ -280,7 +143,6 @@ export default function VideoTile({
             width: "100%",
             height: "100%",
             objectFit: "cover",
-            display: "block",
           }}
         />
       )}
@@ -293,14 +155,10 @@ export default function VideoTile({
           left: 8,
           background: channel.color,
           color: "#fff",
-          fontFamily: "'DM Mono', monospace",
-          fontWeight: 700,
           fontSize: 11,
-          letterSpacing: "0.08em",
           padding: "2px 8px",
           borderRadius: 3,
-          textTransform: "uppercase",
-          pointerEvents: "none",
+          fontFamily: "monospace",
         }}
       >
         {channel.name}
@@ -308,11 +166,11 @@ export default function VideoTile({
 
       {/* STATUS */}
       {status === "loading" && (
-        <div style={overlayStyle}>connecting…</div>
+        <Overlay text="connecting…" />
       )}
 
       {status === "error" && (
-        <div style={overlayStyle}>stream error</div>
+        <Overlay text="stream error" />
       )}
 
       {/* FULLSCREEN */}
@@ -330,7 +188,6 @@ export default function VideoTile({
             border: "none",
             color: "#aaa",
             padding: "3px 6px",
-            cursor: "pointer",
             borderRadius: 3,
           }}
         >
@@ -341,14 +198,20 @@ export default function VideoTile({
   );
 }
 
-const overlayStyle = {
-  position: "absolute",
-  inset: 0,
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  background: "#0a0a0a",
-  color: "#555",
-  fontFamily: "monospace",
-  fontSize: 12,
-};
+const Overlay = ({ text }) => (
+  <div
+    style={{
+      position: "absolute",
+      inset: 0,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      background: "#0a0a0a",
+      color: "#555",
+      fontFamily: "monospace",
+      fontSize: 12,
+    }}
+  >
+    {text}
+  </div>
+);
