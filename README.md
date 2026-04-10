@@ -18,4 +18,4 @@ Data from X/Twitter and Facebook is scraped using custom-made RSS feeds, using [
 
 ---
 
-**This website is protected under GPL-3.0 license.**
+**This website is protected under AGPL-3.0 license.**
