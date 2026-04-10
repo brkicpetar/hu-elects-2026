@@ -1,222 +1,320 @@
 import { useEffect, useRef, useState } from "react";
 
-const HLSType = ["m3u8", "/m1", "/novas", "/proxy"]
+const isHLS = (url) =>
+  ["m3u8", "/m1", "/novas", "/proxy"].some((k) => url.includes(k));
 
-const isHLS = (url) => HLSType.some(key => url.includes(key));
-const isEmbed = (url) => url.startsWith("embed:") || url.includes("player.php") || url.includes("youtube.com") || url.includes("youtu.be");
-const getEmbedUrl = (url) => url.startsWith("embed:") ? url.slice(6) : url;
+const isEmbed = (url) =>
+  url?.startsWith("embed:") ||
+  url?.includes("player.php") ||
+  url?.includes("youtube.com") ||
+  url?.includes("youtu.be");
 
-export default function VideoTile({ channel, isAudioActive, onActivateAudio }) {
+const getEmbedUrl = (url) =>
+  url?.startsWith("embed:") ? url.slice(6) : url;
+
+export default function VideoTile({
+  channel,
+  isAudioActive,
+  onActivateAudio,
+}) {
   const videoRef = useRef(null);
   const playerRef = useRef(null);
+  const modeRef = useRef(null); // "hls" | "mpegts"
+  const destroyedRef = useRef(false);
+
   const [status, setStatus] = useState("idle");
 
   useEffect(() => {
-    if (!channel.stream || !videoRef.current) {
+    destroyedRef.current = false;
+
+    const video = videoRef.current;
+    const url = channel.stream;
+
+    if (!url || !video) {
       setStatus("idle");
       return;
     }
-    if (isEmbed(channel.stream)) {
+
+    if (isEmbed(url)) {
       setStatus("playing");
       return;
     }
 
     setStatus("loading");
-    let destroyed = false;
-    const video = videoRef.current;
 
-    const loadStream = async () => {
-      const url = channel.stream;
+    const cleanup = async () => {
+      const p = playerRef.current;
+      if (!p) return;
 
+      try {
+        if (modeRef.current === "hls") {
+          p.destroy();
+        } else if (modeRef.current === "mpegts") {
+          p.destroy?.();
+          p.stopLoad?.();
+          p.detachMedia?.();
+        }
+      } catch {}
+
+      playerRef.current = null;
+      modeRef.current = null;
+    };
+
+    const load = async () => {
+      await cleanup();
+      if (destroyedRef.current) return;
+
+      // =========================
+      // HLS
+      // =========================
       if (isHLS(url)) {
         const Hls = (await import("hls.js")).default;
-        if (destroyed) return;
+        if (destroyedRef.current) return;
+
         if (Hls.isSupported()) {
           const hls = new Hls({
             enableWorker: true,
             lowLatencyMode: false,
             backBufferLength: 30,
-            manifestLoadingTimeOut: 20000,
-            manifestLoadingMaxRetry: 3,
-            levelLoadingTimeOut: 20000,
-            fragLoadingTimeOut: 30000,
           });
+
+          modeRef.current = "hls";
           playerRef.current = hls;
+
           hls.loadSource(url);
           hls.attachMedia(video);
-          hls.on(Hls.Events.MANIFEST_PARSED, () => {
-            if (!destroyed) {
+
+          hls.on(Hls.Events.MANIFEST_PARSED, async () => {
+            if (destroyedRef.current) return;
+
+            try {
+              video.muted = true;
+              await video.play();
+              video.muted = !isAudioActive;
               setStatus("playing");
-              video.muted = true; // must start muted for autoplay
-              video.play().then(() => {
-                video.muted = !isAudioActive;
-              }).catch(() => {});
+            } catch {
+              setStatus("error");
             }
           });
+
           hls.on(Hls.Events.ERROR, (_, data) => {
-            if (data.fatal && !destroyed) setStatus("error");
-          });
-        } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
-          video.src = url;
-          video.addEventListener("loadedmetadata", () => {
-            if (!destroyed) {
-              setStatus("playing");
-              video.muted = true;
-              video.play().then(() => {
-                video.muted = !isAudioActive;
-              }).catch(() => {});
+            if (data.fatal) {
+              console.warn("HLS fatal error", data);
+              setStatus("error");
             }
           });
         } else {
+          video.src = url;
+          setStatus("playing");
+        }
+
+        return;
+      }
+
+      // =========================
+      // MPEGTS
+      // =========================
+      const mpegts = (await import("mpegts.js")).default;
+      if (destroyedRef.current) return;
+
+      if (!mpegts.isSupported()) {
+        setStatus("error");
+        return;
+      }
+
+      const player = mpegts.createPlayer(
+        {
+          type: "mpegts",
+          isLive: true,
+          url,
+          hasAudio: true,
+          hasVideo: true,
+        },
+        {
+          enableWorker: true,
+
+          // IMPORTANT: stability > latency for TVHeadend
+          enableStashBuffer: true,
+          stashInitialSize: 512,
+
+          liveBufferLatencyChasing: true,
+          liveBufferLatencyMaxLatency: 8,
+          liveBufferLatencyMinRemain: 2,
+        }
+      );
+
+      modeRef.current = "mpegts";
+      playerRef.current = player;
+
+      player.attachMediaElement(video);
+      player.load();
+
+      player.on(mpegts.Events.ERROR, (_, detail) => {
+        console.warn("MPEGTS error:", detail);
+
+        // HARD RESET (MSE cannot recover)
+        setStatus("error");
+
+        try {
+          player.destroy();
+        } catch {}
+
+        playerRef.current = null;
+      });
+
+      player.on(mpegts.Events.STREAM_LOADED, async () => {
+        if (destroyedRef.current) return;
+
+        try {
+          await video.play();
+          setStatus("playing");
+        } catch {
           setStatus("error");
         }
-      } else {
-        const mpegts = (await import("mpegts.js")).default;
-        if (destroyed) return;
-        if (!mpegts.isSupported()) { setStatus("error"); return; }
-
-        const player = mpegts.createPlayer(
-          { type: "mpegts", isLive: true, url, hasAudio: true, hasVideo: true },
-          { enableWorker: true, enableStashBuffer: false, liveBufferLatencyChasing: true,
-            liveBufferLatencyMaxLatency: 8, liveBufferLatencyMinRemain: 2 }
-        );
-        playerRef.current = player;
-        player.attachMediaElement(video);
-        player.load();
-
-        const onCanPlay = () => {
-          if (!destroyed) { setStatus("playing"); video.play().catch(() => {}); }
-        };
-        video.addEventListener("canplay", onCanPlay, { once: true });
-        player.on(mpegts.Events.ERROR, () => { if (!destroyed) setStatus("error"); });
-        playerRef.current._onCanPlay = onCanPlay;
-        playerRef.current._video = video;
-      }
+      });
     };
 
-    loadStream();
+    load();
 
     return () => {
-      destroyed = true;
-      if (playerRef.current) {
-        try {
-          const p = playerRef.current;
-          if (p._video && p._onCanPlay) p._video.removeEventListener("canplay", p._onCanPlay);
-          if (typeof p.destroy === "function") p.destroy();
-          else if (typeof p.stopLoad === "function") { p.stopLoad(); p.detachMedia(); }
-        } catch (e) {}
-        playerRef.current = null;
-      }
+      destroyedRef.current = true;
+      cleanup();
     };
   }, [channel.stream]);
 
-  // Mute/unmute based solely on which tile is audio-active
+  // mute sync
   useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-    video.muted = !isAudioActive;
+    if (videoRef.current) {
+      videoRef.current.muted = !isAudioActive;
+    }
   }, [isAudioActive]);
 
-  // Volume and mute on the active tile — driven by parent via imperative ref
-  // (see index.js applyVolume) — no effect needed here
-
   const toggleFullscreen = () => {
-    const tile = document.getElementById(`tile-${channel.id}`);
-    if (!document.fullscreenElement) tile?.requestFullscreen();
+    const el = document.getElementById(`tile-${channel.id}`);
+    if (!document.fullscreenElement) el?.requestFullscreen();
     else document.exitFullscreen();
   };
 
-  const embedUrl = channel.stream && isEmbed(channel.stream) ? getEmbedUrl(channel.stream) : null;
+  const embedUrl =
+    channel.stream && isEmbed(channel.stream)
+      ? getEmbedUrl(channel.stream)
+      : null;
 
   return (
     <div
       id={`tile-${channel.id}`}
-      className="video-tile"
-      style={{
-        position: "relative", background: "#0a0a0a", borderRadius: "6px",
-        overflow: "hidden",
-        border: isAudioActive ? `2px solid ${channel.color}` : "2px solid #1a1a1a",
-        transition: "border-color 0.2s", cursor: "pointer", aspectRatio: "16/9",
-      }}
       onClick={() => onActivateAudio(channel.id)}
+      style={wrapperStyle(channel, isAudioActive)}
     >
       {embedUrl ? (
         <iframe
           src={embedUrl}
-          style={{ width: "100%", height: "100%", border: "none", display: "block" }}
-          allowFullScreen
+          style={iframeStyle}
           allow="autoplay; fullscreen"
-          scrolling="no"
+          allowFullScreen
         />
       ) : (
         <video
           ref={videoRef}
           muted
           playsInline
-          style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+          style={videoStyle}
         />
       )}
 
-      {/* Channel label */}
-      <div style={{
-        position: "absolute", top: 8, left: 8, background: channel.color, color: "#fff",
-        fontFamily: "'DM Mono', monospace", fontWeight: 700, fontSize: 11,
-        letterSpacing: "0.08em", padding: "2px 8px", borderRadius: 3, textTransform: "uppercase",
-        pointerEvents: "none",
-      }}>
-        {channel.name}
-      </div>
-
-      {/* Audio indicator */}
-      {isAudioActive && !embedUrl && (
-        <div style={{
-          position: "absolute", top: 8, right: 8, display: "flex", alignItems: "center", gap: 4,
-          background: "rgba(0,0,0,0.7)", padding: "3px 7px", borderRadius: 3,
-          color: channel.color, fontSize: 10, fontFamily: "'DM Mono', monospace",
-          letterSpacing: "0.05em", pointerEvents: "none",
-        }}>
-          <span style={{ fontSize: 9 }}>🔊</span> AUDIO
-        </div>
-      )}
+      {/* UI overlays */}
+      <div style={labelStyle(channel)}>{channel.name}</div>
 
       {status === "loading" && (
-        <div style={overlayStyle}>
-          <div style={{ color: "#555", fontFamily: "monospace", fontSize: 12 }}>connecting…</div>
-        </div>
+        <Overlay text="connecting…" />
       )}
-      {status === "idle" && (
-        <div style={overlayStyle}>
-          <div style={{ textAlign: "center" }}>
-            <div style={{ color: channel.color, fontFamily: "'DM Mono', monospace", fontSize: 22, fontWeight: 700, marginBottom: 6 }}>
-              {channel.logo}
-            </div>
-            <div style={{ color: "#444", fontSize: 11, fontFamily: "monospace" }}>stream url not configured</div>
-          </div>
-        </div>
-      )}
+
       {status === "error" && (
-        <div style={overlayStyle}>
-          <div style={{ textAlign: "center" }}>
-            <div style={{ color: "#ef5350", fontFamily: "monospace", fontSize: 11, marginBottom: 4 }}>stream error</div>
-            <div style={{ color: "#555", fontSize: 10, fontFamily: "monospace" }}>{channel.stream?.slice(0, 40)}…</div>
-          </div>
-        </div>
+        <Overlay
+          text="stream error"
+          sub={channel.stream?.slice(0, 40)}
+          color="#ef5350"
+        />
       )}
 
       {status === "playing" && (
-        <button onClick={(e) => { e.stopPropagation(); toggleFullscreen(); }}
-          style={{
-            position: "absolute", bottom: 8, right: 8, background: "rgba(0,0,0,0.5)",
-            border: "none", color: "#aaa", cursor: "pointer",
-            padding: "3px 6px", borderRadius: 3, fontSize: 12, lineHeight: 1, zIndex: 10,
-          }} title="Fullscreen">⛶</button>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            toggleFullscreen();
+          }}
+          style={fsButton}
+        >
+          ⛶
+        </button>
       )}
     </div>
   );
 }
 
-const overlayStyle = {
-  position: "absolute", inset: 0,
-  display: "flex", alignItems: "center", justifyContent: "center",
+/* ================= UI helpers ================= */
+
+const Overlay = ({ text, sub, color = "#555" }) => (
+  <div style={overlayStyle}>
+    <div style={{ textAlign: "center" }}>
+      <div style={{ color, fontFamily: "monospace", fontSize: 12 }}>
+        {text}
+      </div>
+      {sub && (
+        <div style={{ color: "#444", fontSize: 10 }}>{sub}</div>
+      )}
+    </div>
+  </div>
+);
+
+const wrapperStyle = (channel, active) => ({
+  position: "relative",
   background: "#0a0a0a",
+  borderRadius: 6,
+  overflow: "hidden",
+  border: active
+    ? `2px solid ${channel.color}`
+    : "2px solid #1a1a1a",
+  aspectRatio: "16/9",
+  cursor: "pointer",
+});
+
+const videoStyle = {
+  width: "100%",
+  height: "100%",
+  objectFit: "cover",
+};
+
+const iframeStyle = videoStyle;
+
+const overlayStyle = {
+  position: "absolute",
+  inset: 0,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  background: "#0a0a0a",
+};
+
+const labelStyle = (channel) => ({
+  position: "absolute",
+  top: 8,
+  left: 8,
+  background: channel.color,
+  color: "#fff",
+  fontSize: 11,
+  padding: "2px 8px",
+  borderRadius: 3,
+  fontFamily: "monospace",
+});
+
+const fsButton = {
+  position: "absolute",
+  bottom: 8,
+  right: 8,
+  background: "rgba(0,0,0,0.5)",
+  border: "none",
+  color: "#aaa",
+  padding: "3px 6px",
+  cursor: "pointer",
 };
