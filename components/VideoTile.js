@@ -1,25 +1,21 @@
 import { useEffect, useRef, useState } from "react";
 
-const HLSType = ["m3u8", "/m1", "/novas", "/proxy"]
-
-const isHLS = (url) => HLSType.some(key => url.includes(key));
+const isHLS   = (url) => url.includes(".m3u8") || url.includes("m3u8") || url.includes("/m1") || url.includes("/proxy");
+const isWebM  = (url) => url.includes("/rtl") || url.endsWith(".webm") || url.includes("webm");
 const isEmbed = (url) => url.startsWith("embed:") || url.includes("player.php") || url.includes("youtube.com") || url.includes("youtu.be");
 const getEmbedUrl = (url) => url.startsWith("embed:") ? url.slice(6) : url;
 
 export default function VideoTile({ channel, isAudioActive, onActivateAudio }) {
-  const videoRef = useRef(null);
+  const videoRef  = useRef(null);
   const playerRef = useRef(null);
   const [status, setStatus] = useState("idle");
 
+  // ── Stream loader (HLS / MPEG-TS) ────────────────────────────────────────
   useEffect(() => {
-    if (!channel.stream || !videoRef.current) {
-      setStatus("idle");
-      return;
-    }
-    if (isEmbed(channel.stream)) {
-      setStatus("playing");
-      return;
-    }
+    if (!channel.stream || !videoRef.current) { setStatus("idle"); return; }
+
+    // WebM and embeds are handled separately — nothing to do here
+    if (isEmbed(channel.stream) || isWebM(channel.stream)) return;
 
     setStatus("loading");
     let destroyed = false;
@@ -33,13 +29,9 @@ export default function VideoTile({ channel, isAudioActive, onActivateAudio }) {
         if (destroyed) return;
         if (Hls.isSupported()) {
           const hls = new Hls({
-            enableWorker: true,
-            lowLatencyMode: false,
-            backBufferLength: 30,
-            manifestLoadingTimeOut: 20000,
-            manifestLoadingMaxRetry: 3,
-            levelLoadingTimeOut: 20000,
-            fragLoadingTimeOut: 30000,
+            enableWorker: true, lowLatencyMode: false, backBufferLength: 30,
+            manifestLoadingTimeOut: 20000, manifestLoadingMaxRetry: 3,
+            levelLoadingTimeOut: 20000, fragLoadingTimeOut: 30000,
           });
           playerRef.current = hls;
           hls.loadSource(url);
@@ -47,10 +39,8 @@ export default function VideoTile({ channel, isAudioActive, onActivateAudio }) {
           hls.on(Hls.Events.MANIFEST_PARSED, () => {
             if (!destroyed) {
               setStatus("playing");
-              video.muted = true; // must start muted for autoplay
-              video.play().then(() => {
-                video.muted = !isAudioActive;
-              }).catch(() => {});
+              video.muted = true;
+              video.play().then(() => { video.muted = !isAudioActive; }).catch(() => {});
             }
           });
           hls.on(Hls.Events.ERROR, (_, data) => {
@@ -62,19 +52,17 @@ export default function VideoTile({ channel, isAudioActive, onActivateAudio }) {
             if (!destroyed) {
               setStatus("playing");
               video.muted = true;
-              video.play().then(() => {
-                video.muted = !isAudioActive;
-              }).catch(() => {});
+              video.play().then(() => { video.muted = !isAudioActive; }).catch(() => {});
             }
           });
         } else {
           setStatus("error");
         }
       } else {
+        // MPEG-TS via mpegts.js
         const mpegts = (await import("mpegts.js")).default;
         if (destroyed) return;
         if (!mpegts.isSupported()) { setStatus("error"); return; }
-
         const player = mpegts.createPlayer(
           { type: "mpegts", isLive: true, url, hasAudio: true, hasVideo: true },
           { enableWorker: true, enableStashBuffer: false, liveBufferLatencyChasing: true,
@@ -83,10 +71,7 @@ export default function VideoTile({ channel, isAudioActive, onActivateAudio }) {
         playerRef.current = player;
         player.attachMediaElement(video);
         player.load();
-
-        const onCanPlay = () => {
-          if (!destroyed) { setStatus("playing"); video.play().catch(() => {}); }
-        };
+        const onCanPlay = () => { if (!destroyed) { setStatus("playing"); video.play().catch(() => {}); } };
         video.addEventListener("canplay", onCanPlay, { once: true });
         player.on(mpegts.Events.ERROR, () => { if (!destroyed) setStatus("error"); });
         playerRef.current._onCanPlay = onCanPlay;
@@ -104,21 +89,45 @@ export default function VideoTile({ channel, isAudioActive, onActivateAudio }) {
           if (p._video && p._onCanPlay) p._video.removeEventListener("canplay", p._onCanPlay);
           if (typeof p.destroy === "function") p.destroy();
           else if (typeof p.stopLoad === "function") { p.stopLoad(); p.detachMedia(); }
-        } catch (e) {}
+        } catch {}
         playerRef.current = null;
       }
     };
   }, [channel.stream]);
 
-  // Mute/unmute based solely on which tile is audio-active
+  // ── WebM loader ───────────────────────────────────────────────────────────
+  // Sets src imperatively so we control mute state from the start,
+  // avoiding React's one-shot `muted` prop quirk
+  useEffect(() => {
+    if (!channel.stream || !videoRef.current) return;
+    if (!isWebM(channel.stream)) return;
+
+    const video = videoRef.current;
+    video.muted = true; // always start muted for autoplay policy
+    video.src = channel.stream;
+    video.load();
+    video.play()
+      .then(() => {
+        video.muted = !isAudioActive;
+        setStatus("playing");
+      })
+      .catch(() => {
+        // autoplay blocked — still mark playing, user click will unmute
+        setStatus("playing");
+      });
+
+    return () => {
+      video.pause();
+      video.src = "";
+    };
+  }, [channel.stream]);
+
+  // ── Mute / unmute on active tile switch (all stream types) ───────────────
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
     video.muted = !isAudioActive;
   }, [isAudioActive]);
-
-  // Volume and mute on the active tile — driven by parent via imperative ref
-  // (see index.js applyVolume) — no effect needed here
 
   const toggleFullscreen = () => {
     const tile = document.getElementById(`tile-${channel.id}`);
@@ -131,7 +140,6 @@ export default function VideoTile({ channel, isAudioActive, onActivateAudio }) {
   return (
     <div
       id={`tile-${channel.id}`}
-      className="video-tile"
       style={{
         position: "relative", background: "#0a0a0a", borderRadius: "6px",
         overflow: "hidden",
@@ -141,17 +149,15 @@ export default function VideoTile({ channel, isAudioActive, onActivateAudio }) {
       onClick={() => onActivateAudio(channel.id)}
     >
       {embedUrl ? (
-        <iframe
-          src={embedUrl}
+        <iframe src={embedUrl}
           style={{ width: "100%", height: "100%", border: "none", display: "block" }}
-          allowFullScreen
-          allow="autoplay; fullscreen"
-          scrolling="no"
-        />
+          allowFullScreen allow="autoplay; fullscreen" scrolling="no" />
       ) : (
+        // Single <video> element for ALL non-embed streams:
+        // HLS, MPEG-TS, and WebM all share the same ref.
+        // Stream type determines which loader useEffect runs above.
         <video
           ref={videoRef}
-          muted
           playsInline
           style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
         />
@@ -202,7 +208,6 @@ export default function VideoTile({ channel, isAudioActive, onActivateAudio }) {
           </div>
         </div>
       )}
-
       {status === "playing" && (
         <button onClick={(e) => { e.stopPropagation(); toggleFullscreen(); }}
           style={{
