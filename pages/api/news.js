@@ -45,7 +45,21 @@ function extractThumbnail(item) {
   return match ? match[1] : null;
 }
 
-// Translate a single string. Returns translated string or original on failure.
+async function fetchFeed(feed) {
+  const res = await fetch(feed.url, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      "Accept": "application/rss+xml, application/xml, text/xml, */*",
+      "Accept-Language": "hu-HU,hu;q=0.9,en;q=0.8",
+      "Cache-Control": "no-cache",
+    },
+    signal: AbortSignal.timeout(12000),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const xml = await res.text();
+  return parser.parseString(xml);
+}
+
 async function translateOne(text, sl = "hu") {
   if (!text || !text.trim()) return text;
   try {
@@ -55,16 +69,12 @@ async function translateOne(text, sl = "hu") {
     );
     if (!res.ok) return text;
     const data = await res.json();
-    // data[0] is array of [translatedChunk, originalChunk, ...]
-    // Join all chunks to reconstruct the full translation
-    const translated = data[0]?.map((chunk) => chunk[0]).join("") || text;
-    return translated;
+    return data[0]?.map((chunk) => chunk[0]).join("") || text;
   } catch {
     return text;
   }
 }
 
-// Translate an array one-by-one with concurrency limit
 async function translateAll(texts, sl = "hu", concurrency = 4) {
   const results = new Array(texts.length).fill(null);
   for (let i = 0; i < texts.length; i += concurrency) {
@@ -75,27 +85,36 @@ async function translateAll(texts, sl = "hu", concurrency = 4) {
   return results;
 }
 
+function buildArticles(items, feed) {
+  return items.slice(0, 15).map((item) => ({
+    id: item.guid || item.link || item.title,
+    title: item.title || "",
+    summary: item.contentSnippet || item.summary || "",
+    link: item.link || "",
+    pubDate: item.isoDate || item.pubDate || new Date().toISOString(),
+    thumbnail: extractThumbnail(item),
+    source: feed.source,
+    lang: feed.lang,
+    category: feed.category,
+    titleEn: null,
+    summaryEn: null,
+    cluster: null,
+  }));
+}
+
 export default async function handler(req, res) {
   res.setHeader("Cache-Control", "no-store");
 
-  const results = await Promise.allSettled(
-    RSS_FEEDS.map(async (feed) => {
+  // Split feeds: server-fetchable vs client-side (Cloudflare-protected)
+  const serverFeeds = RSS_FEEDS.filter((f) => !f.clientSide);
+  const clientFeeds = RSS_FEEDS.filter((f) => f.clientSide);
+
+  // Fetch server-side feeds normally
+  const serverResults = await Promise.allSettled(
+    serverFeeds.map(async (feed) => {
       try {
-        const parsed = await parser.parseURL(feed.url);
-        return parsed.items.slice(0, 15).map((item) => ({
-          id: item.guid || item.link || item.title,
-          title: item.title || "",
-          summary: item.contentSnippet || item.summary || "",
-          link: item.link || "",
-          pubDate: item.isoDate || item.pubDate || new Date().toISOString(),
-          thumbnail: extractThumbnail(item),
-          source: feed.source,
-          lang: feed.lang,
-          category: feed.category,
-          titleEn: null,
-          summaryEn: null,
-          cluster: null,
-        }));
+        const parsed = await fetchFeed(feed);
+        return buildArticles(parsed.items, feed);
       } catch (e) {
         console.error(`Feed ${feed.source} failed:`, e.message);
         return [];
@@ -103,7 +122,18 @@ export default async function handler(req, res) {
     })
   );
 
-  let articles = results.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
+  let articles = serverResults.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
+
+  // If client sent pre-fetched articles for client-side feeds, merge them in
+  if (req.method === "POST") {
+    try {
+      const body = req.body;
+      if (body?.clientArticles && Array.isArray(body.clientArticles)) {
+        articles = [...articles, ...body.clientArticles];
+      }
+    } catch {}
+  }
+
   articles.sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
 
   // Deduplication clustering
@@ -122,28 +152,31 @@ export default async function handler(req, res) {
 
   let finalArticles = clusters.map((cluster, ci) => {
     const primary = articles[cluster[0]];
-    return { ...primary, cluster: ci, clusterSize: cluster.length, clusterSources: cluster.map((idx) => articles[idx].source) };
+    return {
+      ...primary,
+      cluster: ci,
+      clusterSize: cluster.length,
+      clusterSources: cluster.map((idx) => articles[idx].source),
+    };
   });
 
-  // Translation — only Hungarian articles, only uncached ones
+  // Translation
   const huArticles = finalArticles.filter((a) => a.lang === "hu");
   const toTranslate = huArticles.filter((a) => !translationCache.has(getCacheKey(a)));
 
   if (toTranslate.length > 0) {
-    const titles   = toTranslate.map((a) => a.title);
+    const titles    = toTranslate.map((a) => a.title);
     const summaries = toTranslate.map((a) => a.summary.slice(0, 300));
 
-    // Translate independently — no joined batches, no index mismatch
     const [translatedTitles, translatedSummaries] = await Promise.all([
       translateAll(titles, "hu", 4),
       translateAll(summaries, "hu", 4),
     ]);
 
     toTranslate.forEach((art, i) => {
-      const key = getCacheKey(art);
-      translationCache.set(key, {
-        titleEn:   translatedTitles[i]   !== art.title          ? translatedTitles[i]   : null,
-        summaryEn: translatedSummaries[i] !== art.summary        ? translatedSummaries[i] : null,
+      translationCache.set(getCacheKey(art), {
+        titleEn:   translatedTitles[i]   !== art.title   ? translatedTitles[i]   : null,
+        summaryEn: translatedSummaries[i] !== art.summary ? translatedSummaries[i] : null,
       });
     });
   }
@@ -153,5 +186,10 @@ export default async function handler(req, res) {
     if (cached) { art.titleEn = cached.titleEn; art.summaryEn = cached.summaryEn; }
   });
 
-  res.json({ articles: finalArticles, fetchedAt: new Date().toISOString() });
+  // Tell client which feeds it needs to fetch itself
+  res.json({
+    articles: finalArticles,
+    clientFeeds: clientFeeds.map((f) => ({ url: f.url, source: f.source, lang: f.lang, category: f.category })),
+    fetchedAt: new Date().toISOString(),
+  });
 }

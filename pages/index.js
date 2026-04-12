@@ -6,6 +6,7 @@ import NewsSidebar from "../components/NewsSidebar";
 import SocialPanel from "../components/SocialPanel";
 import FacebookPanel from "../components/FacebookPanel";
 import { CHANNELS, DEFAULT_KEYWORDS, REFRESH_INTERVAL_MS } from "../lib/config";
+import { fetchClientFeeds } from "../lib/fetchClientFeeds";
 
 const VideoTile = dynamic(() => import("../components/VideoTile"), { ssr: false });
 
@@ -50,24 +51,45 @@ export default function Home() {
   }, [volume, muted, audioChannel]);
 
   const fetchNews = useCallback(async () => {
-    try {
-      const res = await fetch("/api/news?t=" + Date.now());
-      if (!res.ok) return;
-      const data = await res.json();
-      const incoming = data.articles || [];
-      const incomingIds = new Set(incoming.map((a) => a.id));
-      const brandNew = new Set([...incomingIds].filter((id) => !prevArticleIdsRef.current.has(id)));
-      setArticles(incoming);
-      setLastFetch(data.fetchedAt);
-      if (brandNew.size > 0) setNewArticleIds(brandNew);
-      prevArticleIdsRef.current = incomingIds;
-      setTimeout(() => setNewArticleIds(new Set()), 10000);
-    } catch (e) {
-      console.error("News fetch failed", e);
-    } finally {
-      setLoading(false);
+  try {
+    // Phase 1: server fetch (NYT, Politico — no Cloudflare)
+    // Returns articles + list of client-side feeds to fetch
+    const res = await fetch("/api/news?t=" + Date.now());
+    if (!res.ok) return;
+    const data = await res.json();
+
+    // Phase 2: browser fetches Cloudflare-protected feeds directly
+    const clientArticles = await fetchClientFeeds(data.clientFeeds || []);
+
+    // Phase 3: send client articles back to server for dedup + translation
+    let finalData = data;
+    if (clientArticles.length > 0) {
+      const mergeRes = await fetch("/api/news?t=" + Date.now(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clientArticles }),
+      });
+      if (mergeRes.ok) {
+        finalData = await mergeRes.json();
+      }
     }
-  }, []);
+
+    const incoming = finalData.articles || [];
+    const incomingIds = new Set(incoming.map((a) => a.id));
+    const brandNew = new Set([...incomingIds].filter((id) => !prevArticleIdsRef.current.has(id)));
+
+    setArticles(incoming);
+    setLastFetch(finalData.fetchedAt);
+    if (brandNew.size > 0) setNewArticleIds(brandNew);
+    prevArticleIdsRef.current = incomingIds;
+    setTimeout(() => setNewArticleIds(new Set()), 10000);
+  } catch (e) {
+    console.error("News fetch failed", e);
+  } finally {
+    setLoading(false);
+  }
+}, []);
+
 
   useEffect(() => {
     fetchNews();
