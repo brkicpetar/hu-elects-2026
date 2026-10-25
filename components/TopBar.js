@@ -62,7 +62,7 @@ export default function TopBar({ keywords, setKeywords, displayLang, setDisplayL
             textTransform: "uppercase",
           }}
         >
-          HU/ELECTS 2026
+          SRB/ELECTS 2026
         </span>
         <span
           style={{
@@ -144,7 +144,7 @@ export default function TopBar({ keywords, setKeywords, displayLang, setDisplayL
 
       {/* Language switcher */}
       <div style={{ display: "flex", gap: 2, flexShrink: 0 }}>
-        {["hu", "en"].map((lang) => (
+        {["rs", "en"].map((lang) => (
           <button
             key={lang}
             onClick={() => setDisplayLang(lang)}
