@@ -64,7 +64,9 @@ export default function NewsSidebar({ articles, displayLang, keywords, loading, 
   };
 
   // Filter to only keyword-matching articles
-  const filtered = articles.filter(matchesKeywords);
+  const filtered = articles.filter(article =>
+      article.lang !== "en" || matchesKeywords(article, keywords)
+  );
 
   if (loading) {
     return (

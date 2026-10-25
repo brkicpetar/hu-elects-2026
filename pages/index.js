@@ -12,8 +12,6 @@ const VideoTile = dynamic(() => import("../components/VideoTile"), { ssr: false 
 
 const TABS = [
   { id: "news",     label: (n) => n > 0 ? `News (${n})` : "News" },
-  { id: "social",   label: () => "𝕏" },
-  { id: "facebook", label: () => "Facebook" },
 ];
 
 export default function Home() {
