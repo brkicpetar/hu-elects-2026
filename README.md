@@ -11,8 +11,6 @@ The data has been scraped from public sources. Included broadcasts are from publ
 
 Data from news outlets is being scraped using official RSS feeds.
 
-Data from X/Twitter and Facebook is scraped using custom-made RSS feeds, using [RSS.app](rss.app) service.
-
 <img alt="Screenshot of platform" src="https://github.com/user-attachments/assets/83335e3a-f8d8-4b3c-965a-6f9c54040b50" />
 
 
